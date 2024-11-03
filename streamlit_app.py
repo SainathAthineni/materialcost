@@ -1,8 +1,23 @@
 import streamlit as st
-import requests
+import sqlite3
 
-# Base URL for the Flask API
-BASE_URL = "http://127.0.0.1:5000"
+# Set up the SQLite database connection
+def init_db():
+    conn = sqlite3.connect('materials.db')
+    cursor = conn.cursor()
+    # Create the materials table if it doesn't exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS materials (
+            id INTEGER PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            cost REAL NOT NULL
+        )
+    ''')
+    conn.commit()
+    return conn
+
+# Initialize the database
+conn = init_db()
 
 st.title("Material Cost Lookup")
 
@@ -11,25 +26,24 @@ st.header("Add or Update Material")
 material_name = st.text_input("Enter material name:")
 material_cost = st.number_input("Enter material cost:", min_value=0.0, format="%.2f")
 
-if st.button("Add Material"):
+if st.button("Add or Update Material"):
     if material_name and material_cost:
-        response = requests.post(
-            f"{BASE_URL}/add_material",
-            json={"name": material_name, "cost": material_cost}
-        )
+        cursor = conn.cursor()
         
-        # Check for various response statuses
-        if response.status_code == 201:
-            st.success(f"Material '{material_name}' added successfully with cost {material_cost}!")
-        elif response.status_code == 200:
-            st.success(response.json()["message"])  # If the material exists, it updates
+        # Check if the material already exists
+        cursor.execute("SELECT * FROM materials WHERE name = ?", (material_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            # Update existing material
+            cursor.execute("UPDATE materials SET cost = ? WHERE name = ?", (material_cost, material_name))
+            conn.commit()
+            st.success(f"Cost of '{material_name}' updated to {material_cost}")
         else:
-            # Handle unexpected error messages
-            try:
-                error_message = response.json().get("error", "Failed to add or update material.")
-            except ValueError:
-                error_message = "An unexpected error occurred."
-            st.error(error_message)
+            # Insert new material
+            cursor.execute("INSERT INTO materials (name, cost) VALUES (?, ?)", (material_name, material_cost))
+            conn.commit()
+            st.success(f"Material '{material_name}' added with cost {material_cost}")
     else:
         st.warning("Please enter both a name and a cost.")
 
@@ -41,16 +55,13 @@ search_name = st.text_input("Search material by name:")
 
 if st.button("Get Cost"):
     if search_name:
-        response = requests.get(f"{BASE_URL}/get_material_cost", params={"name": search_name})
-        if response.status_code == 200:
-            data = response.json()
-            st.write(f"The cost of '{data['name']}' is: ${data['cost']}")
+        cursor = conn.cursor()
+        cursor.execute("SELECT cost FROM materials WHERE name = ?", (search_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            st.write(f"The cost of '{search_name}' is: ${result[0]}")
         else:
-            # Handle the case when the material is not found
-            try:
-                error_message = response.json().get("error", "Material not found.")
-            except ValueError:
-                error_message = "An unexpected error occurred."
-            st.error(error_message)
+            st.error("Material not found.")
     else:
         st.warning("Please enter a material name to search.")
